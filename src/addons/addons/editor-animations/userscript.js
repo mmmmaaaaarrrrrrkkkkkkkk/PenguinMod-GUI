@@ -1,13 +1,44 @@
 // Editor Animations (remake of Reactive Animation by <https://github.com/mmmmaaaaarrrrrrkkkkkkkk>)
 // By: SharkPool
 // By: reflow <https://github.com/mmmmaaaaarrrrrrkkkkkkkk>
+
+/* TODO
+- patch custom modal api when added
+- patch adding modals from addons (they dont use react)
+*/
+
 export default async function({ addon }) {
   const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
   const addonKey = "addonAnimations-";
-  const cubicAnimation = "cubic-bezier(0.63, 0.32, 0.08, 0.95)";
-  const getAnim = (time) => { return `${time}s ${cubicAnimation}` };
+  const animationTypes = {
+    "default": "cubic-bezier(0.63, 0.32, 0.08, 0.95)",
+    "easeIn": "cubic-bezier(0.42, 0, 1.0, 1.0)",
+    "easeOut": "cubic-bezier(0, 0, 0.58, 1.0)",
+    "easeInOut": "cubic-bezier(0.42, 0, 0.58, 1.0)",
+    "smoothStep": "cubic-bezier(0.25, 0.1, 0.25, 1.0)",
+    "fastInSlowOut": "cubic-bezier(0.4, 0.0, 0.2, 1.0)",
+    "sineIn": "cubic-bezier(0.47, 0, 0.745, 0.715)",
+    "sineOut": "cubic-bezier(0.39, 0.575, 0.565, 1)",
+    "sineInOut": "cubic-bezier(0.445, 0.05, 0.55, 0.95)",
+    "quadIn": "cubic-bezier(0.55, 0.085, 0.68, 0.53)",
+    "quadOut": "cubic-bezier(0.25, 0.46, 0.45, 0.94)",
+    "quadInOut": "cubic-bezier(0.455, 0.03, 0.515, 0.955)",
+    "cubicIn": "cubic-bezier(0.55, 0.055, 0.675, 0.19)",
+    "cubicOut": "cubic-bezier(0.215, 0.61, 0.355, 1)",
+    "cubicInOut": "cubic-bezier(0.645, 0.045, 0.355, 1)",
+    "quartIn": "cubic-bezier(0.895, 0.03, 0.685, 0.22)",
+    "quartOut": "cubic-bezier(0.165, 0.84, 0.44, 1)",
+    "quartInOut": "cubic-bezier(0.77, 0, 0.175, 1)",
+    "quintIn": "cubic-bezier(0.755, 0.05, 0.855, 0.06)",
+    "quintOut": "cubic-bezier(0.23, 1, 0.32, 1)",
+    "quintInOut": "cubic-bezier(0.86, 0, 0.07, 1)"
+  };
 
-  const styles = `
+  let needsInit = true, animateModals = true, animateLibraries = true, animateButtons = true,
+    animationSpeed = 1, animationType = "default";
+  let patchedBody = false, sbPatched = false, sbEverPatched = false, listenerAttached = false;
+
+  const genStyles = () => `
 /* Top Bar Items */
 .${addonKey}top-bar-scaler {
     transition: transform ${getAnim(.1)};
@@ -96,7 +127,7 @@ export default async function({ addon }) {
 
   const styleElement = document.createElement("style");
   styleElement.classList.add("addon-editorAnimations");
-  styleElement.textContent = styles;
+  styleElement.textContent = genStyles();
   document.head.appendChild(styleElement);
   
   let animationEnabled = !mediaQuery.matches;
@@ -104,14 +135,25 @@ export default async function({ addon }) {
     animationEnabled = !e.matches;
   });
 
-  let needsInit = true, animateModals = true, animateLibraries = true, animateButtons = true;
-  let patchedBody = false, sbPatched = false, sbEverPatched = false, listenerAttached = false;
-
   function requestAddonState() {
     animateModals = addon.settings.get("animateModals");
     animateLibraries = addon.settings.get("animateLibraries");
     animateButtons = addon.settings.get("animateButtons");
+    animationType = addon.settings.get("animationType");
+
+    const oldSpeed = animationSpeed;
+    animationSpeed = 1 / (Number(addon.settings.get("animateSpeed")) / 100);
+    if (oldSpeed !== animationSpeed) styleElement.textContent = genStyles();
   }
+
+  function getEasing() {
+    return animationTypes[animationType];
+  }
+
+  function getAnim(time) {
+    time *= animationSpeed;
+    return `${time}s ${getEasing()}`;
+  };
 
   function observeMenuScalers(element, observerSub, observerAtt) {
     if (!animateModals) return;
@@ -144,7 +186,6 @@ export default async function({ addon }) {
   }
 
   function handleOpenAnimation(elementName) {
-    requestAddonState();
     const type = elementName.endsWith("Library") ? "library" : elementName.endsWith("Menu") ? "menu" : "modal";
 
     if (!animateLibraries && type === "library") return;
@@ -174,10 +215,13 @@ export default async function({ addon }) {
       if (elementName === "guiCtxMenu") animTime = 500;
       else element.style.transform = "translateY(-2px) scale(.999)";
 
-      element.animate(
+      const animation = element.animate(
         [{ height: "0px", opacity: 0 }, { height: `${ogHeight}px`, opacity: 1 }],
-        { duration: animTime, easing: cubicAnimation }
+        { duration: animTime * animationSpeed, easing: getEasing() }
       );
+      animation.onfinish = () => {
+        element.style.overflow = "hidden";
+      };
       return;
     }
 
@@ -191,12 +235,11 @@ export default async function({ addon }) {
 
     element.animate(
       [{ transform: "scale(0)", opacity: 0 }, { transform: "scale(1)", opacity: 1 }],
-      { duration: animTime, easing: cubicAnimation }
+      { duration: animTime * animationSpeed, easing: getEasing() }
     );
   }
 
   function attachCloseHijack(elementName) {
-    requestAddonState();
     const type = elementName.endsWith("Library") ? "library" : elementName.endsWith("Menu") ? "menu" : "modal";
     if (type === "menu" || patchedBody) return;
 
@@ -207,11 +250,10 @@ export default async function({ addon }) {
     const ogRemoveChild = document.body.constructor.prototype.removeChild;
     document.body.constructor.prototype.removeChild = function(child) {
       const element = document.querySelector(`div[class="ReactModalPortal"]`);
-      if (!element) return;
+      if (!element) return ogRemoveChild.call(this, child);
 
       let animTime = 200;
       patchedBody = true;
-
       if (child === element) {
         const child = element.firstChild;
         if (child) {
@@ -230,11 +272,11 @@ export default async function({ addon }) {
 
           animClone.animate(
             [{ opacity: 1 }, { opacity: 0 }],
-            { duration: animTime, easing: cubicAnimation }
+            { duration: animTime * animationSpeed, easing: getEasing() }
           );
           const animation = animClone.firstChild.animate(
             [{ transform: "scale(1)", opacity: 1 }, { transform: "scale(0)", opacity: 0 }],
-            { duration: animTime, easing: cubicAnimation }
+            { duration: animTime * animationSpeed, easing: getEasing() }
           );
           animation.onfinish = () => {
             animClone.remove();
@@ -250,7 +292,6 @@ export default async function({ addon }) {
   }
 
   function compileClasses(optLibrary) {
-    requestAddonState();
     if (!animateButtons) return;
     const classMapper = new Map();
 
@@ -267,16 +308,18 @@ export default async function({ addon }) {
           filterDiv.style.display = "";
           filterDiv.animate(
             [{ width: "0px", opacity: 0 }, { width: "342px", opacity: 1 }],
-            { duration: 300, easing: cubicAnimation }
+            { duration: 300, easing: getEasing() }
           );
         } else {
           collapser.style.transform = "rotateY(0deg)";
-          collapser.setAttribute("closed", "true");
           const animation = filterDiv.animate(
             [{ width: "342px", opacity: 1 }, { width: "0px", opacity: 0 }],
-            { duration: 300, easing: cubicAnimation }
+            { duration: 300, easing: getEasing() }
           );
-          animation.onfinish = () => { filterDiv.style.display = "none" };
+          animation.onfinish = () => {
+              collapser.setAttribute("closed", "true");
+              filterDiv.style.display = "none";
+          };
         }
 
         e.stopPropagation();
@@ -375,13 +418,16 @@ export default async function({ addon }) {
     const spriteRow = document.querySelector(`div[class^="sprite-selector_items-wrapper"]`);
     if (!spriteRow) return;
 
-    spriteRow.addEventListener("contextmenu", (event) => {
-      const element = event.target.closest(`div[class*="sprite-selector_sprite-wrapper"]`);
+    document.addEventListener("contextmenu", (event) => {
+      let element = event.target.closest(`div[class*="sprite-selector_sprite-wrapper"]`);
+      if (element) element = element.firstChild;
+      else element = event.target.closest(`div[class^="react-contextmenu-wrapper"][class*="sprite-selector-item_sprite-selector"]`);
+
       if (element) {
         setTimeout(() => {
-          element.firstChild.querySelector("nav").style.opacity = 1;
+          element.querySelector("nav").style.opacity = 1;
           handleOpenAnimation("guiCtxMenu");
-          observeMenuScalers(element.firstChild, true, ["class", "style"]);
+          observeMenuScalers(element, true, ["class", "style"]);
         }, 10);
       }
     });
@@ -427,7 +473,7 @@ export default async function({ addon }) {
             const name = entry[0];
             handleOpenAnimation(name);
             attachCloseHijack(name);
-            compileClasses();
+            compileClasses(name.endsWith("Library") ? name : undefined);
             break;
           }
         }
@@ -436,4 +482,16 @@ export default async function({ addon }) {
   }
 
   if (typeof scaffolding === "undefined") startListenerWorker();
+
+  addon.settings.addEventListener("change", requestAddonState);
+  addon.self.addEventListener("disabled", () => {
+    animateModals = false;
+    animateLibraries = false;
+    animateButtons = false;
+  });
+  addon.self.addEventListener("reenabled", () => {
+    animateModals = true;
+    animateLibraries = true;
+    animateButtons = true;
+  });
 }
